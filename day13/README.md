@@ -1,4 +1,4 @@
-# 【Day 13】與世界對話：API 串接與非同步狀態管理
+# 【Day 13】API 串接與狀態管理：優雅地處理數據的「來去」
 
 ## 聯繫我
 如果有任何問題或建議，歡迎隨時聯繫我：
@@ -8,131 +8,388 @@
 
 ## 前言
 
-到目前為止，我們的應用程式就像一個自給自足的內陸國。我們有房間（路由）、有中央儲藏室（Pinia），但所有的傢俱和物品（資料）都是我們自己預先放在裡面的。這在真實世界中是遠遠不夠的。
+各位 Vue 的魔法師們！前幾天我們學習了如何管理組件內部的數據，如何讓數據響應式，如何管理全局狀態。但現實世界中的應用程式，數據往往不是憑空而來，而是需要從遠方的「數據倉庫」（後端 API）中獲取。今天，我們就要學習如何讓你的 Vue 應用程式與後端進行「對話」，優雅地進行 **API 串接**，並將獲取的數據與狀態管理結合起來，處理數據的「來去」！
 
-一個動態的應用程式，需要能與外界溝通、從遠方獲取資訊。這個「外界」，通常就是後端伺服器提供的 **API (Application Programming Interface)**。
+想像你的應用程式是一個餐廳，後端 API 就是食材供應商。你需要向供應商下訂單（發送請求），等待食材送達（接收響應），期間可能會有等待（Loading 狀態），也可能遇到食材短缺或送錯貨（Error 狀態）。如何高效、穩定地處理這些環節，是打造一個健壯應用程式的關鍵。
 
-今天，我們將學習如何讓我們的 Vue 應用程式「走出去」，使用廣受歡迎的 **Axios** 函式庫來發送網路請求 (HTTP Request)，並更重要的是，學習如何優雅地在 Pinia 中管理這些**非同步操作的狀態**（載入中、成功、失敗）。
+## 為什麼需要 API 串接？
 
-## 為什麼需要 Axios？
+現代前端應用程式大多採用前後端分離的架構。前端負責 UI 呈現和使用者互動，後端負責數據儲存和業務邏輯。兩者之間通過 API (Application Programming Interface) 進行數據交換。
 
-你可能會問：「瀏覽器不是內建了 `fetch` API 嗎？為什麼我還需要另一個函式庫？」
+*   **獲取數據**：從伺服器獲取用戶資料、商品列表、文章內容等。
+*   **提交數據**：將用戶輸入的表單數據、訂單資訊等發送到伺服器。
+*   **更新數據**：修改伺服器上的現有數據。
+*   **刪除數據**：從伺服器刪除數據。
 
-你說的沒錯，`fetch` 很好用。但 Axios 在真實專案開發中，提供了一些讓開發者生活更美好的便利功能：
+## 常見的 API 串接方式：`fetch` vs `Axios`
 
-- **更簡潔的 API**：`axios.get()` 的語法通常比 `fetch` 更直觀。
-- **自動轉換 JSON**：Axios 會自動將收到的 JSON 字串轉換成 JavaScript 物件，而 `fetch` 需要手動呼叫 `.json()`。
-- **更好的錯誤處理**：`fetch` 只有在網路層級出錯時才會 reject，對於像 404 或 500 這樣的 HTTP 錯誤，它仍然會 resolve，你需要自己檢查 `response.ok`。而 Axios 會直接將這些錯誤視為 Promise 的 rejection，讓 `catch` 區塊的邏輯更統一。
-- **請求與回應攔截器 (Interceptors)**：這是 Axios 的王牌功能。你可以在發送請求前或收到回應後，統一對它們進行處理，例如自動加上 Token 或處理全域的錯誤提示。
+在 JavaScript 中，有兩種主流的方式來發送 HTTP 請求：
 
-## 在 Pinia Action 中串接 API
+### 1. 原生 `fetch` API
 
-管理非同步狀態的最佳實踐，就是將所有相關的邏輯都封裝在 Pinia 的 `action` 裡面。組件只需要「觸發」這個 action，然後監聽 store 中狀態的變化即可，完全不用關心 API 是如何被呼叫的。
+`fetch` 是瀏覽器內建的 API，它返回一個 Promise，使用起來相對簡潔。
 
-一個典型的非同步 action 包含三個狀態：
-1.  `data`：成功時，用來儲存 API 回傳的資料。
-2.  `isLoading`：一個布林值，表示請求是否正在進行中。
-3.  `error`：請求失敗時，用來儲存錯誤訊息。
-
-讓我們來看一個獲取使用者列表的例子。
-
-**`stores/userStore.js`**
 ```javascript
+// 使用 fetch 獲取數據
+const fetchDataWithFetch = async () => {
+  try {
+    const response = await fetch('https://jsonplaceholder.typicode.com/todos/1');
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const data = await response.json();
+    console.log('Fetch Data:', data);
+  } catch (error) {
+    console.error('Fetch Error:', error);
+  }
+};
+
+// 使用 fetch 提交數據 (POST)
+const postDataWithFetch = async () => {
+  try {
+    const response = await fetch('https://jsonplaceholder.typicode.com/posts', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: 'foo',
+        body: 'bar',
+        userId: 1,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const data = await response.json();
+    console.log('Fetch POST Data:', data);
+  } catch (error) {
+    console.error('Fetch POST Error:', error);
+  }
+};
+```
+
+### 2. 第三方函式庫 `Axios` (推薦)
+
+`Axios` 是一個基於 Promise 的 HTTP 客戶端，可以在瀏覽器和 Node.js 中使用。它提供了更豐富的功能和更友好的 API，是前端開發中非常流行的選擇。
+
+**安裝 Axios**：
+
+```bash
+npm install axios
+# 或者
+yarn add axios
+```
+
+**使用 Axios**：
+
+```javascript
+// 使用 Axios 獲取數據
+import axios from 'axios';
+
+const fetchDataWithAxios = async () => {
+  try {
+    const response = await axios.get('https://jsonplaceholder.typicode.com/todos/1');
+    console.log('Axios Data:', response.data); // Axios 會自動解析 JSON，數據在 response.data 中
+  } catch (error) {
+    console.error('Axios Error:', error);
+    // Axios 的錯誤處理更方便，可以直接訪問 error.response, error.request, error.message
+  }
+};
+
+// 使用 Axios 提交數據 (POST)
+const postDataWithAxios = async () => {
+  try {
+    const response = await axios.post('https://jsonplaceholder.typicode.com/posts', {
+      title: 'foo',
+      body: 'bar',
+      userId: 1,
+    });
+    console.log('Axios POST Data:', response.data);
+  } catch (error) {
+    console.error('Axios POST Error:', error);
+  }
+};
+```
+
+**為什麼推薦 Axios？**
+
+*   **自動 JSON 解析**：`Axios` 會自動將響應數據解析為 JSON 物件，無需手動 `response.json()`。
+*   **統一的錯誤處理**：提供了更詳細的錯誤資訊，方便除錯。
+*   **請求/響應攔截器**：可以在請求發送前或響應接收後進行統一處理（例如添加 Token、錯誤日誌）。
+*   **取消請求**：支援取消正在進行的請求。
+*   **進度追蹤**：支援上傳/下載進度追蹤。
+
+## 優雅地處理 Loading 與 Error 狀態：讓用戶知道發生了什麼
+
+在發送 API 請求時，數據的獲取是一個非同步過程。這期間，用戶可能會看到空白頁面，或者操作沒有反應。因此，優雅地處理「載入中 (Loading)」和「錯誤 (Error)」狀態至關重要，這能大大提升使用者體驗。
+
+通常，我們會結合 Pinia (或組件自身的響應式狀態) 來管理這些狀態。
+
+```html
+<!-- src/components/UserFetcher.vue -->
+<script setup>
+import { ref } from 'vue';
+import axios from 'axios';
+
+const user = ref(null);
+const isLoading = ref(false);
+const error = ref(null);
+
+const fetchUser = async () => {
+  isLoading.value = true; // 開始載入，設定為 true
+  error.value = null; // 清除之前的錯誤
+  try {
+    const response = await axios.get('https://jsonplaceholder.typicode.com/users/1');
+    user.value = response.data;
+  } catch (err) {
+    error.value = '載入用戶數據失敗：' + err.message; // 捕獲錯誤
+  } finally {
+    isLoading.value = false; // 載入結束，設定為 false
+  }
+};
+
+// 組件掛載時自動獲取數據
+import { onMounted } from 'vue';
+onMounted(fetchUser);
+</script>
+
+<template>
+  <div>
+    <h1>用戶數據</h1>
+    <button @click="fetchUser" :disabled="isLoading">重新載入</button>
+
+    <div v-if="isLoading">
+      <p>載入中，請稍候...</p>
+    </div>
+
+    <div v-else-if="error">
+      <p style="color: red;">{{ error }}</p>
+    </div>
+
+    <div v-else-if="user">
+      <p>姓名: {{ user.name }}</p>
+      <p>Email: {{ user.email }}</p>
+    </div>
+
+    <div v-else>
+      <p>沒有數據</p>
+    </div>
+  </div>
+</template>
+```
+
+### 結合 Pinia 進行狀態管理 (推薦)
+
+將 Loading 和 Error 狀態集中到 Pinia Store 中管理，可以讓多個組件共享這些狀態，避免重複邏輯。
+
+```javascript
+// src/stores/user.js
 import { defineStore } from 'pinia';
 import axios from 'axios';
 
 export const useUserStore = defineStore('user', {
   state: () => ({
-    users: [],
+    user: null,
     isLoading: false,
     error: null,
   }),
   actions: {
-    async fetchUsers() {
-      // 1. 開始請求，進入載入狀態
+    async fetchUser() {
       this.isLoading = true;
-      this.error = null; // 清除之前的錯誤
-
+      this.error = null;
       try {
-        // 2. 發送 API 請求
-        const response = await axios.get('https://jsonplaceholder.typicode.com/users');
-        
-        // 3. 請求成功，更新資料
-        this.users = response.data;
-
+        const response = await axios.get('https://jsonplaceholder.typicode.com/users/1');
+        this.user = response.data;
       } catch (err) {
-        // 4. 請求失敗，記錄錯誤訊息
-        this.error = '無法獲取使用者資料：' + err.message;
-        console.error(err);
-
+        this.error = '載入用戶數據失敗：' + err.message;
       } finally {
-        // 5. 無論成功或失敗，最終都結束載入狀態
         this.isLoading = false;
       }
     },
   },
 });
 ```
-> 這個 `try...catch...finally` 的結構是處理非同步操作的黃金模式，務必牢記！
 
-## 在組件中呈現非同步狀態
+在組件中使用：
 
-一旦 Store 的邏輯建立好，組件的任務就變得非常單純：
-
-1.  在適當的時機（例如 `onMounted`）呼叫 `fetchUsers` action。
-2.  根據 `isLoading` 和 `error` 的狀態，顯示不同的 UI。
-
-**`UserList.vue`**
 ```html
+<!-- src/components/UserDisplay.vue -->
 <script setup>
+import { useUserStore } from '../stores/user';
+import { storeToRefs } from 'pinia';
 import { onMounted } from 'vue';
-import { useUserStore } from '../stores/userStore';
 
 const userStore = useUserStore();
+const { user, isLoading, error } = storeToRefs(userStore);
 
-// 在組件掛載後，觸發 action 來獲取資料
 onMounted(() => {
-  userStore.fetchUsers();
+  userStore.fetchUser(); // 組件掛載時觸發獲取數據的 action
 });
 </script>
 
 <template>
   <div>
-    <h1>使用者列表</h1>
+    <h1>用戶數據 (來自 Pinia)</h1>
+    <button @click="userStore.fetchUser()" :disabled="isLoading">重新載入</button>
 
-    <!-- 載入中狀態 -->
-    <div v-if="userStore.isLoading">載入中...</div>
+    <div v-if="isLoading">
+      <p>載入中，請稍候...</p>
+    </div>
 
-    <!-- 錯誤狀態 -->
-    <div v-else-if="userStore.error" class="error">{{ userStore.error }}</div>
+    <div v-else-if="error">
+      <p style="color: red;">{{ error }}</p>
+    </div>
 
-    <!-- 成功狀態 -->
-    <ul v-else>
-      <li v-for="user in userStore.users" :key="user.id">
-        {{ user.name }} ({{ user.email }})
-      </li>
-    </ul>
+    <div v-else-if="user">
+      <p>姓名: {{ user.name }}</p>
+      <p>Email: {{ user.email }}</p>
+    </div>
+
+    <div v-else>
+      <p>沒有數據</p>
+    </div>
   </div>
 </template>
 ```
-> 這種模式讓我們的組件職責非常清晰。組件只負責「呈現 UI」和「觸發事件」，而所有複雜的商業邏輯和狀態管理，都交給了 Pinia Store。
+
+## 小技巧與注意事項：
+
+*   **錯誤處理**：錯誤處理就像是給你的 API 請求買保險！別以為請求一定會成功，網路不穩、伺服器心情不好... 什麼都可能發生。用 `try...catch` 把錯誤「抓」起來，然後告訴用戶發生了什麼事，或是偷偷記下來（console.error），別讓你的應用程式「裸奔」！
+*   **請求攔截器 (Axios Interceptors)**：攔截器就像是 API 請求的「海關」和「安檢」。請求發出去前，先檢查一下有沒有帶「通行證」（Token）；回應回來後，先看看是不是「違禁品」（錯誤碼），然後再決定要不要放行。這樣你就不需要在每個請求裡重複寫這些邏輯，省心又省力！
+*   **取消請求**：想像用戶是個急性子，點了又點、滑了又滑。如果你不取消舊請求，就像你點了十份外賣，結果只想要一份。用「取消請求」，就像打電話給外賣小哥說：「不好意思，剛才點錯了，那份不要了！」避免伺服器和瀏覽器「過勞死」，也避免數據「亂入」。
+*   **數據預載入**：數據預載入就像是「提前備菜」。用戶還沒進餐廳（頁面），你就先把菜準備好。這樣等用戶一坐下，菜馬上就能上桌，不會看到空蕩蕩的桌面（頁面閃爍），體驗超棒！
+*   **集中式 API 服務**：
+    *   別讓你的 API 請求「散兵遊勇」！把所有跟 API 溝通的邏輯都集中到一個「司令部」（`api.js`），統一管理。這樣，無論是改基地 URL、加 Token，還是處理錯誤，都只需要改一個地方，就像有了「中央控制室」，效率高到爆！
+    ```javascript
+    // src/services/api.js
+    import axios from 'axios';
+
+    const api = axios.create({
+      baseURL: 'https://api.example.com',
+      timeout: 10000, // 請求超時時間
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    // 請求攔截器：例如添加認證 Token
+    api.interceptors.request.use(
+      config => {
+        const token = localStorage.getItem('authToken');
+        if (token) {
+          config.headers.Authorization = `Bearer ${token}`;
+        }
+        return config;
+      },
+      error => {
+        return Promise.reject(error);
+      }
+    );
+
+    // 響應攔截器：例如統一處理錯誤響應
+    api.interceptors.response.use(
+      response => response,
+      error => {
+        if (error.response) {
+          // 伺服器返回錯誤狀態碼
+          console.error('API Error:', error.response.status, error.response.data);
+          // 根據狀態碼進行處理，例如 401 跳轉登入頁
+          if (error.response.status === 401) {
+            // router.push('/login');
+          }
+        } else if (error.request) {
+          // 請求已發出但沒有收到響應
+          console.error('No response received:', error.request);
+        } else {
+          // 其他錯誤
+          console.error('Error:', error.message);
+        }
+        return Promise.reject(error);
+      }
+    );
+
+    export default api;
+    ```
+    然後在你的 Store 或組件中這樣使用：
+    ```javascript
+    // import api from '../services/api';
+    // const response = await api.get('/users');
+    ```
+*   **數據獲取模式 (Data Fetching Patterns)**：
+    *   數據怎麼「上菜」？有兩種常見模式：
+        *   **「一開門就上菜」(`onMounted`)**：組件一掛載就發請求，適合頁面首次載入的數據。
+        *   **「看客人臉色上菜」(`watch`)**：當用戶的「點菜單」（搜索詞、篩選器）變了，就重新上菜。記得給「點菜單」加個「防抖」（debounce），別讓廚師（伺服器）忙不過來！
+    ```javascript
+    // 範例：監聽搜索關鍵字變化來獲取數據
+    import { ref, watch } from 'vue';
+    // ...
+    const searchTerm = ref('');
+    watch(searchTerm, (newTerm) => {
+      if (newTerm.length > 2) {
+        // 觸發 API 請求
+        // fetchUsers(newTerm);
+      }
+    }, { debounce: 300 }); // 可以考慮防抖 (debounce) 來減少請求頻率
+    ```
+*   **`Composable` 封裝 API 邏輯**：
+    *   把 API 請求、Loading、Error 這些「三件套」打包成一個「萬用工具」（例如 `useFetch` 或 `useApi`）。這樣，無論哪個組件需要「取貨」，直接拿這個工具去用就行，不用每次都重新組裝，省時省力，還能保證品質！
+    ```javascript
+    // src/composables/useFetch.js (簡化範例)
+    import { ref } 'vue';
+    import axios from 'axios';
+
+    export function useFetch(url) {
+      const data = ref(null);
+      const error = ref(null);
+      const isLoading = ref(false);
+
+      const fetchData = async () => {
+        isLoading.value = true;
+        error.value = null;
+        try {
+          const response = await axios.get(url);
+          data.value = response.data;
+        } catch (err) {
+          error.value = err;
+        } finally {
+          isLoading.value = false;
+        }
+      };
+
+      return { data, error, isLoading, fetchData };
+    }
+    ```
+    然後在組件中使用：
+    ```javascript
+    // import { useFetch } from '../composables/useFetch';
+    // const { data, error, isLoading, fetchData } = useFetch('https://api.example.com/posts');
+    // onMounted(fetchData);
+    ```
+*   **樂觀更新 (Optimistic Updates)**：
+    *   樂觀更新就像是「先斬後奏」！用戶點了個讚，你先讓讚的數字馬上變，讓用戶感覺超快。然後再偷偷去跟伺服器說：「我點讚了喔！」如果伺服器說不行，再把數字改回來。這招能讓你的應用程式「飛」起來，但記得要準備好「後悔藥」（回滾邏輯）喔！
 
 ## 本篇自我挑戰
 
-- **挑戰一：尋寶遊戲**
-  網路上有許多免費的公開 API，例如 [JSONPlaceholder](https://jsonplaceholder.typicode.com/) 或 [The Rick and Morty API](https://rickandmortyapi.com/documentation)。請任選一個，建立一個對應的 Pinia store，並在組件中獲取並展示它的資料。
-
-- **挑戰二：下拉刷新**
-  如果想在 `UserList.vue` 中加入一個「重新整理」的按鈕，點擊後可以重新獲取最新的使用者列表。你會如何修改組件和 store 的 action 來實現這個功能？
+-   **今日挑戰**：選擇一個你感興趣的公開 API（例如：[JSONPlaceholder](https://jsonplaceholder.typicode.com/)、[PokéAPI](https://pokeapi.co/)），嘗試在你的 Vue 應用程式中，使用 `Axios` 獲取數據，並將 `isLoading`、`error` 和獲取到的數據儲存到一個 Pinia Store 中。在組件中顯示這些狀態，並添加一個「重新載入」按鈕。
+-   **反思**：將 API 請求的 Loading 和 Error 狀態集中管理，對於大型應用程式的開發和維護有什麼好處？
 
 ## 總結
 
-今天，我們為應用程式裝上了連通世界的「網路天線」。我們掌握了如何將非同步的 API 請求，優雅地整合到我們的狀態管理流程中。
+今天我們學習了如何在 Vue 應用程式中進行 API 串接，並重點探討了如何優雅地處理數據的載入 (Loading) 和錯誤 (Error) 狀態。我們比較了 `fetch` 和 `Axios`，並推薦使用 `Axios` 來簡化請求處理。結合 Pinia 進行狀態管理，可以讓你的數據流更加清晰、可預測，大大提升使用者體驗和開發效率。
 
-- **Axios**：一個強大且易用的 HTTP 客戶端，簡化了 API 請求的處理。
-- **非同步 Action**：在 Pinia 的 action 中使用 `async/await` 來處理 API 請求是標準做法。
-- **管理載入狀態**：使用 `isLoading` 這樣的布林值來追蹤請求是否在進行中，對於提升使用者體驗至關重要。
-- **錯誤處理**：`try...catch` 區塊讓我們可以捕捉到 API 請求失敗時的錯誤，並在 UI 上給予使用者適當的回饋。
-- **職責分離**：組件負責 UI 和觸發事件，Store 負責商業邏輯和狀態管理，這讓我們的程式碼更清晰、更容易維護。
+本日關鍵字回顧
 
-我們已經能獲取資料了，但使用者也需要能「輸入」資料。明天，我們將探討在 Web 開發中最常見也最複雜的任務之一：**表單處理與驗證**。
+-   **API 串接**: 前端與後端數據交換。
+-   **`fetch`**: 瀏覽器原生 API。
+-   **`Axios`**: 基於 Promise 的 HTTP 客戶端，功能更強大。
+-   **Loading 狀態**: 數據載入中。
+-   **Error 狀態**: 數據載入失敗。
+-   **`try...catch...finally`**: 錯誤處理機制。
+-   **請求攔截器**: `Axios` 的高級功能。
+-   **取消請求**: 避免不必要的請求和競態條件。
+-   **Pinia**: 狀態管理庫。
+-   **集中式 API 服務**: 封裝 Axios 實例和請求邏輯。
+-   **數據獲取模式**: `onMounted`, `watch` 等觸發請求的時機。
+-   **`Composable` 封裝**: 將 API 邏輯抽離成可複用函式。
+-   **樂觀更新**: 提升使用者體驗的 UI 技巧。
+
+明天，我們將進入另一個實用主題——表單處理與驗證，學習如何讓你的表單既美觀又健壯！
